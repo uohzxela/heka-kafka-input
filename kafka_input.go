@@ -1,18 +1,3 @@
-/***** BEGIN LICENSE BLOCK *****
-# This Source Code Form is subject to the terms of the Mozilla Public
-# License, v. 2.0. If a copy of the MPL was not distributed with this file,
-# You can obtain one at http://mozilla.org/MPL/2.0/.
-#
-# The Initial Developer of the Original Code is the Mozilla Foundation.
-# Portions created by the Initial Developer are Copyright (C) 2014-2015
-# the Initial Developer. All Rights Reserved.
-#
-# Contributor(s):
-#   Mike Trinkala (trink@mozilla.com)
-#   Rob Miller (rmiller@mozilla.com)
-#
-# ***** END LICENSE BLOCK *****/
-
 package kafka
 
 import (
@@ -64,7 +49,7 @@ type KafkaInput struct {
 	// clientConfig       *sarama.ClientConfig
 	// consumerConfig     *sarama.ConsumerConfig
 	client             *sarama.Client
-	consumer           *sarama.Consumer
+	consumer           sarama.PartitionConsumer
 	pConfig            *pipeline.PipelineConfig
 	ir                 pipeline.InputRunner
 	checkpointFile     *os.File
@@ -144,9 +129,8 @@ func (k *KafkaInput) Init(config interface{}) (err error) {
 	saramaConfig.Metadata.Retry.Max = k.config.MetadataRetries
 	// k.clientConfig.MetadataRetries = k.config.MetadataRetries
 	saramaConfig.Metadata.Retry.Backoff = time.Duration(k.config.WaitForElection) * time.Millisecond
-	// k.clientConfig.WaitForElection = time.Duration(k.config.WaitForElection) * time.Millisecond
+	// k.clientConfig.WaitForElection = time.Duration(k.config.WaitForElection) * time.Milliseconda
 	saramaConfig.Metadata.RefreshFrequency = time.Duration(k.config.BackgroundRefreshFrequency) * time.Millisecond
-	// k.clientConfig.BackgroundRefreshFrequency = time.Duration(k.config.BackgroundRefreshFrequency) * time.Millisecond
 
 	// k.clientConfig.DefaultBrokerConf = sarama.NewBrokerConfig()
 	saramaConfig.Net.MaxOpenRequests = k.config.MaxOpenRequests
@@ -169,7 +153,7 @@ func (k *KafkaInput) Init(config interface{}) (err error) {
 	// k.consumerConfig.MaxWaitTime = time.Duration(k.config.MaxWaitTime) * time.Millisecond
 	k.checkpointFilename = k.pConfig.Globals.PrependBaseDir(filepath.Join("kafka",
 		fmt.Sprintf("%s.%s.%d.offset.bin", k.name, k.config.Topic, k.config.Partition)))
-
+	offsetMethod := sarama.OffsetNewest
 	switch k.config.OffsetMethod {
 	// case "Manual":
 	// 	k.consumerConfig.OffsetMethod = sarama.OffsetMethodManual
@@ -184,14 +168,14 @@ func (k *KafkaInput) Init(config interface{}) (err error) {
 	// 		k.consumerConfig.OffsetMethod = sarama.OffsetMethodOldest
 	// 	}
 	case "Newest":
-		offsetMethod := sarama.OffsetNewest
+		offsetMethod = sarama.OffsetNewest
 		if fileExists(k.checkpointFilename) {
 			if err = os.Remove(k.checkpointFilename); err != nil {
 				return
 			}
 		}
 	case "Oldest":
-		offsetMethod := sarama.OffsetOldest
+		offsetMethod = sarama.OffsetOldest
 		if fileExists(k.checkpointFilename) {
 			if err = os.Remove(k.checkpointFilename); err != nil {
 				return
@@ -203,11 +187,12 @@ func (k *KafkaInput) Init(config interface{}) (err error) {
 
 	saramaConfig.ChannelBufferSize = k.config.ChannelBufferSize
 	saramaConfig.ClientID = k.config.Id
-	k.client, err = sarama.NewClient(k.config.Addrs, saramaConfig)
+	client, err := sarama.NewClient(k.config.Addrs, saramaConfig)
 	if err != nil {
 		return
 	}
-	k.consumer, err = sarama.NewConsumerFromClient(k.client)
+	master, err := sarama.NewConsumerFromClient(client)
+	k.consumer, err = master.ConsumePartition(k.config.Topic, 0, offsetMethod)
 	return
 }
 
@@ -224,7 +209,6 @@ func (k *KafkaInput) addField(pack *pipeline.PipelinePack, name string,
 func (k *KafkaInput) Run(ir pipeline.InputRunner, h pipeline.PluginHelper) (err error) {
 	defer func() {
 		k.consumer.Close()
-		k.client.Close()
 		if k.checkpointFile != nil {
 			k.checkpointFile.Close()
 		}
@@ -253,13 +237,13 @@ func (k *KafkaInput) Run(ir pipeline.InputRunner, h pipeline.PluginHelper) (err 
 	if !sRunner.UseMsgBytes() {
 		sRunner.SetPackDecorator(packDec)
 	}
-
 	for {
 		select {
 		case message, ok = <-k.consumer.Messages():
 			if !ok {
 				return
 			}
+			fmt.Println(string(message.Value))
 			atomic.AddInt64(&k.processMessageCount, 1)
 			// if event.Err != nil {
 			// 	if event.Err == sarama.OffsetOutOfRange {
