@@ -141,11 +141,12 @@ func (k *KafkaInput) Init(config interface{}) (err error) {
 	}
 	saramaConfig := sarama.NewConfig()
 	// k.clientConfig = sarama.NewClientConfig()
-	saramaConfig.Metadata.Retry = k.config.MetadataRetries
+	saramaConfig.Metadata.Retry.Max = k.config.MetadataRetries
 	// k.clientConfig.MetadataRetries = k.config.MetadataRetries
-	saramaConfig.Metadata.Backoff = time.Duration(k.config.WaitForElection) * time.Millisecond
+	saramaConfig.Metadata.Retry.Backoff = time.Duration(k.config.WaitForElection) * time.Millisecond
 	// k.clientConfig.WaitForElection = time.Duration(k.config.WaitForElection) * time.Millisecond
-	k.clientConfig.BackgroundRefreshFrequency = time.Duration(k.config.BackgroundRefreshFrequency) * time.Millisecond
+	saramaConfig.Metadata.RefreshFrequency = time.Duration(k.config.BackgroundRefreshFrequency) * time.Millisecond
+	// k.clientConfig.BackgroundRefreshFrequency = time.Duration(k.config.BackgroundRefreshFrequency) * time.Millisecond
 
 	// k.clientConfig.DefaultBrokerConf = sarama.NewBrokerConfig()
 	saramaConfig.Net.MaxOpenRequests = k.config.MaxOpenRequests
